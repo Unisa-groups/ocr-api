@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  # 1. Squint OCR Engine (Go + Tesseract)
+  squint-ocr:
+    build:
+      context: ./squint-ocr
+      dockerfile: Dockerfile
+    container_name: squint_ocr_service
+    restart: always
+    expose:
+      - "8080"
+    # Optional resource constraints since Tesseract can be CPU heavy
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 512M
+
+  # 2. Your Production Telegram Bot (Python)
+  telegram-bot:
+    build:
+      context: ./python-bot # Path to your existing python bot directory
+      dockerfile: Dockerfile
+    container_name: telegram_monitor_bot
+    restart: always
+    environment:
+      - TELEGRAM_TOKEN=your_secret_bot_token_here
+      # Point the bot to Squint using Podman's internal DNS naming
+      - SQUINT_URL=http://squint-ocr:8080/api/v1/ocr
+    depends_on:
+      - squint-ocr
