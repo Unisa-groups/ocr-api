@@ -2,117 +2,180 @@ package main
 
 import (
 	"encoding/json"
-	"fmt" // Added to safely format and append real underlying errors
+	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"os"
+	"runtime"
 
 	"github.com/otiai10/gosseract/v2"
 )
 
-type OCRRequest struct {
+// Config represents the customizable parameters for the OCR Engine
+type Config struct {
+	WorkerPoolSize  int `json:"worker_pool_size"`
+	QueueBufferSize int `json:"queue_buffer_size"`
+	Port            int `json:"port"`
+}
+
+// Job represents an OCR task waiting for an available worker thread
+type Job struct {
+	ImageBytes []byte
+	ResultChan chan JobResult
+}
+
+// JobResult is the payload sent back from the worker to the HTTP thread
+type JobResult struct {
+	Text  string
+	Error error
+}
+
+type OCRResponse struct {
 	Text   string `json:"text"`
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 }
 
-func ocrHandler(writer http.ResponseWriter, request *http.Request) {
-	writer.Header().Set("Content-Type", "application/json")
+var jobQueue chan Job
+var appConfig Config
 
-	// Extract the Telegram Image URL from the request
-	imageURL := request.URL.Query().Get("image_url")
-	// Validate the presence of the image URL
-	if imageURL == "" {
-		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRRequest{
-			Status: "error",
-			Error:  "[SQUINT]: Missing image_url parameter",
-		})
+// loadConfig reads from config.json or applies safe defaults
+func loadConfig() {
+	appConfig = Config{
+		WorkerPoolSize:  runtime.NumCPU(), // Default to available cores
+		QueueBufferSize: 100,
+		Port:            8080,
+	}
+
+	file, err := os.Open("config.json")
+	if err != nil {
+		log.Println("[SQUINT]: No config.json found. Using default settings.")
+		return
+	}
+	defer file.Close()
+
+	if err := json.NewDecoder(file).Decode(&appConfig); err != nil {
+		log.Printf("[SQUINT]: Failed to parse config.json (%v). Using default settings.\n", err)
 		return
 	}
 
-	// Download the image into RAM - circumvents the need to store images on disk
-	response, err := http.Get(imageURL)
-	// Handle potential errors during image download (Exposes exact network/DNS errors)
+	// Safety rails so bad configs don't crash the server
+	if appConfig.WorkerPoolSize < 1 {
+		appConfig.WorkerPoolSize = 1
+	}
+	if appConfig.QueueBufferSize < 1 {
+		appConfig.QueueBufferSize = 10
+	}
+	log.Println("[SQUINT]: Successfully loaded configuration from config.json")
+}
+
+func init() {
+	loadConfig()
+
+	// Create a buffered channel for incoming requests
+	jobQueue = make(chan Job, appConfig.QueueBufferSize)
+
+	// Spin up the background worker pool
+	for i := 1; i <= appConfig.WorkerPoolSize; i++ {
+		go ocrWorker(i, jobQueue)
+	}
+	log.Printf("[SQUINT]: Initialized worker pool with %d parallel Tesseract daemons.", appConfig.WorkerPoolSize)
+}
+
+// ocrWorker runs infinitely in the background, grabbing jobs from the queue
+func ocrWorker(id int, queue chan Job) {
+	log.Printf("[SQUINT]: Worker thread #%d spawned and idling...", id)
+
+	// Crucial optimization: C++ client is initialized ONCE per thread
+	tesseractClient := gosseract.NewClient()
+	defer tesseractClient.Close()
+	tesseractClient.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
+
+	for job := range queue {
+		var res JobResult
+
+		if err := tesseractClient.SetImageFromBytes(job.ImageBytes); err != nil {
+			res.Error = fmt.Errorf("failed to load image bytes into worker #%d: %v", id, err)
+		} else {
+			text, err := tesseractClient.Text()
+			if err != nil {
+				res.Error = fmt.Errorf("worker #%d core exception: %v", id, err)
+			} else {
+				res.Text = text
+			}
+		}
+
+		// Ship result payload directly back to the HTTP handler
+		job.ResultChan <- res
+	}
+}
+
+func ocrHandler(writer http.ResponseWriter, request *http.Request) {
+	writer.Header().Set("Content-Type", "application/json")
+
+	imageURL := request.URL.Query().Get("image_url")
+	if imageURL == "" {
+		writer.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Missing image_url parameter"})
+		return
+	}
+
+	// Download image using the browser spoof to bypass scraping blockers (e.g., Wikimedia)
+	client := &http.Client{}
+	req, _ := http.NewRequest("GET", imageURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+
+	response, err := client.Do(req)
 	if err != nil {
 		writer.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(writer).Encode(OCRRequest{
-			Status: "error",
-			Error:  fmt.Sprintf("[SQUINT]: Failed to download image. Reason: %v", err),
-		})
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("[SQUINT]: Failed download: %v", err)})
 		return
 	}
 	defer response.Body.Close()
 
-	// Explicitly validate the server returned 200 OK
-	// Prevents passing 404/500 text error fragments into the C++ binary wrapper
 	if response.StatusCode != http.StatusOK {
 		writer.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(writer).Encode(OCRRequest{
-			Status: "error",
-			Error:  fmt.Sprintf("[SQUINT]: Remote host returned HTTP Status %d instead of 200 OK. Verify your image source link.", response.StatusCode),
-		})
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("[SQUINT]: Host returned HTTP %d", response.StatusCode)})
 		return
 	}
 
-	// Read the image data into memory
 	imgBytes, err := io.ReadAll(response.Body)
 	if err != nil {
 		writer.WriteHeader(http.StatusFailedDependency)
-		json.NewEncoder(writer).Encode(OCRRequest{
-			Status: "error",
-			Error:  fmt.Sprintf("[SQUINT]: Failed to read image stream. Reason: %v", err),
-		})
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Stream read failure"})
 		return
 	}
 
-	// Init Tesseract OCR engine now that we have the image data in memory
-	tesseractClient := json_init_tesseract()
-	defer tesseractClient.Close() // CRITICAL: Ensure the Tesseract client is properly closed to free resources
+	// Create a communication channel and dispatch the job to the workers
+	resultChan := make(chan JobResult)
+	job := Job{
+		ImageBytes: imgBytes,
+		ResultChan: resultChan,
+	}
 
-	// Config Tesseract to read L-R, T-B text (common for most languages)
-	tesseractClient.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
+	jobQueue <- job              // Send to the pool
+	workerResult := <-resultChan // Block and wait for a worker to finish
 
-	// Pass RAM buffer to Tesseract for OCR processing
-	if err := tesseractClient.SetImageFromBytes(imgBytes); err != nil {
+	if workerResult.Error != nil {
 		writer.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(writer).Encode(OCRRequest{
-			Status: "error",
-			Error:  fmt.Sprintf("[SQUINT]: Failed to load image bytes into Tesseract. Reason: %v", err),
-		})
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: workerResult.Error.Error()})
 		return
 	}
 
-	// Perform OCR and capture the extracted text (Exposes hidden C++ initialization errors)
-	text, err := tesseractClient.Text()
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(writer).Encode(OCRRequest{
-			Status: "error",
-			Error:  fmt.Sprintf("[SQUINT]: OCR processing failed inside Tesseract C++ core. Reason: %v", err),
-		})
-		return
-	}
-
-	// Respond with the extracted text in JSON format on success
-	json.NewEncoder(writer).Encode(OCRRequest{
-		Text:   text,
+	json.NewEncoder(writer).Encode(OCRResponse{
+		Text:   workerResult.Text,
 		Status: "[SQUINT]: Success",
 	})
 }
 
-// Helper instantiation layer to encapsulate gosseract client setup
-func json_init_tesseract() *gosseract.Client {
-	client := gosseract.NewClient()
-	return client
-}
-
 func main() {
-	// Set up the HTTP server and route for OCR processing
 	http.HandleFunc("/api/v1/ocr", ocrHandler)
 
-	log.Println("[SQUINT]: OCR Service is running on port 8080...")
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		log.Fatalf("[SQUINT]: Failed to start server: %v", err)
+	portStr := fmt.Sprintf(":%d", appConfig.Port)
+	log.Printf("[SQUINT]: Production Multi-Threaded Gateway live on port %d...", appConfig.Port)
+
+	if err := http.ListenAndServe(portStr, nil); err != nil {
+		log.Fatalf("[SQUINT]: Server initialization failure: %v", err)
 	}
 }

@@ -12,8 +12,12 @@ def run_squint_test_suite():
             "url": "https://raw.githubusercontent.com/otiai10/gosseract/main/test/data/001-helloworld.png"
         },
         {
-            "name": "Slightly Distorted Text (PNG)",
-            "url": "https://raw.githubusercontent.com/otiai10/gosseract/main/test/data/002-book.png"
+            "name": "Multi-line Printed Book Paragraph (JPG)",
+            "url": "https://upload.wikimedia.org/wikipedia/commons/e/ea/Text_example.jpg"
+        },
+        {
+            "name": "High-Contrast Multi-line Terminal Text (PNG)",
+            "url": "https://raw.githubusercontent.com/otiai10/gosseract/main/test/data/004-fonts.png"
         },
         {
             "name": "Deliberate 404 Error (Edge Case Test)",

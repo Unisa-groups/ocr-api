@@ -1,0 +1,5 @@
+{
+    "worker_pool_size": 2,
+    "queue_buffer_size": 50,
+    "port": 8080
+}

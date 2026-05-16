@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # 1. Squint OCR Engine (Go + Tesseract)
   squint-ocr:
     build:
       context: ./
@@ -10,11 +9,10 @@ services:
     restart: always
     ports:
       - "8080:8080"
-    # Optional resource constraints since Tesseract can be CPU heavy
+    volumes:
+      - ./config.json:/app/config.json
     deploy:
       resources:
         limits:
-          cpus: '1.5'
+          cpus: '2'
           memory: 512M
-
- 
