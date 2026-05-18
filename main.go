@@ -53,13 +53,13 @@ func loadConfig() {
 
 	file, err := os.Open("config.json")
 	if err != nil {
-		log.Println("[SQUINT]: No config.json found. Using default settings.")
+		log.Println("⚙️  [SQUINT]: No config.json found. Using default settings.")
 		return
 	}
 	defer file.Close()
 
 	if err := json.NewDecoder(file).Decode(&appConfig); err != nil {
-		log.Printf("[SQUINT]: Failed to parse config.json (%v). Using default settings.\n", err)
+		log.Printf("⚠️  [SQUINT]: Failed to parse config.json (%v). Using default settings.\n", err)
 		return
 	}
 
@@ -73,7 +73,7 @@ func loadConfig() {
 	if appConfig.MaxImageSizeMB < 1 {
 		appConfig.MaxImageSizeMB = 10
 	}
-	log.Println("[SQUINT]: Successfully loaded configuration from config.json")
+	log.Println("✅ [SQUINT]: Successfully loaded configuration from config.json")
 }
 
 func init() {
@@ -86,18 +86,18 @@ func init() {
 	for i := 1; i <= appConfig.WorkerPoolSize; i++ {
 		go ocrWorker(i, jobQueue)
 	}
-	log.Printf("[SQUINT]: Initialized worker pool with %d parallel Tesseract daemons.", appConfig.WorkerPoolSize)
+	log.Printf("🔧 [SQUINT]: Initialized worker pool with %d parallel Tesseract daemons.\n", appConfig.WorkerPoolSize)
 }
 
 // ocrWorker runs infinitely in the background, grabbing jobs from the queue
 func ocrWorker(id int, queue chan Job) {
-	log.Printf("[SQUINT]: Worker thread #%d starting up...\n", id)
+	log.Printf("🚀 [SQUINT]: Worker thread #%d starting up...\n", id)
 	// CRITICAL FIX: Bind this goroutine to a dedicated OS thread.
 	// This ensures CGO stability and prevents OpenMP state corruption.
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 
-	log.Printf("[SQUINT]: Worker thread #%d spawned and idling...", id)
+	log.Printf("✨ [SQUINT]: Worker thread #%d spawned and idling...\n", id)
 
 	tesseractClient := gosseract.NewClient()
 	defer tesseractClient.Close()
@@ -107,11 +107,11 @@ func ocrWorker(id int, queue chan Job) {
 		var res JobResult
 
 		if err := tesseractClient.SetImageFromBytes(job.ImageBytes); err != nil {
-			res.Error = fmt.Errorf("failed to load image bytes into worker #%d: %v", id, err)
+			res.Error = fmt.Errorf("❌ failed to load image bytes into worker #%d: %v", id, err)
 		} else {
 			text, err := tesseractClient.Text()
 			if err != nil {
-				res.Error = fmt.Errorf("worker #%d core exception: %v", id, err)
+				res.Error = fmt.Errorf("❌ worker #%d core exception: %v", id, err)
 			} else {
 				res.Text = text
 			}
@@ -124,14 +124,14 @@ func ocrWorker(id int, queue chan Job) {
 
 func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	// IMPROVEMENT: Log immediately upon entry to verify the connection is active
-	log.Printf("[SQUINT]: Incoming %s request from %s to %s\n", request.Method, request.RemoteAddr, request.URL.Path)
+	log.Printf("📨 [SQUINT]: Incoming %s request from %s to %s\n", request.Method, request.RemoteAddr, request.URL.Path)
 	writer.Header().Set("Content-Type", "application/json")
 
 	// 1. Enforce POST requests only
 	if request.Method != http.MethodPost {
 		writer.WriteHeader(http.StatusMethodNotAllowed)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Only POST requests are allowed"})
-		log.Printf("[SQUINT]: Rejected non-POST request from %s\n", request.RemoteAddr)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "❌ Only POST requests are allowed"})
+		log.Printf("🚫 [SQUINT]: Rejected non-POST request from %s\n", request.RemoteAddr)
 		return
 	}
 
@@ -140,8 +140,8 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	err := request.ParseMultipartForm(maxSize)
 	if err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("[SQUINT]: Failed to parse form or file exceeds %d MB limit", appConfig.MaxImageSizeMB)})
-		log.Printf("[SQUINT]: Failed to parse multipart form from %s: %v\n", request.RemoteAddr, err)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("❌ Failed to parse form or file exceeds %d MB limit", appConfig.MaxImageSizeMB)})
+		log.Printf("⚠️  [SQUINT]: Failed to parse multipart form from %s: %v\n", request.RemoteAddr, err)
 		return
 	}
 
@@ -149,8 +149,8 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	file, fileHeader, err := request.FormFile("image")
 	if err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Missing 'image' file in form data"})
-		log.Printf("[SQUINT]: Missing 'image' file in request from %s: %v\n", request.RemoteAddr, err)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "❌ Missing 'image' file in form data"})
+		log.Printf("🚫 [SQUINT]: Missing 'image' file in request from %s: %v\n", request.RemoteAddr, err)
 		return
 	}
 	defer file.Close()
@@ -159,8 +159,8 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	fileSizeKB := fileHeader.Size / 1024
 	if fileHeader.Size > maxSize {
 		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("[SQUINT]: File exceeds %d MB limit", appConfig.MaxImageSizeMB)})
-		log.Printf("[SQUINT]: REJECTED oversized file from %s: %s (%d KB, max: %d MB)\n", request.RemoteAddr, fileHeader.Filename, fileSizeKB, appConfig.MaxImageSizeMB)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("❌ File exceeds %d MB limit", appConfig.MaxImageSizeMB)})
+		log.Printf("📦 [SQUINT]: REJECTED oversized file from %s: %s (%d KB, max: %d MB)\n", request.RemoteAddr, fileHeader.Filename, fileSizeKB, appConfig.MaxImageSizeMB)
 		return
 	}
 
@@ -168,12 +168,12 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	imgBytes, err := io.ReadAll(file)
 	if err != nil {
 		writer.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Stream read failure"})
-		log.Printf("[SQUINT]: Failed to read image bytes from %s: %v\n", request.RemoteAddr, err)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "❌ Stream read failure"})
+		log.Printf("⚠️  [SQUINT]: Failed to read image bytes from %s: %v\n", request.RemoteAddr, err)
 		return
 	}
 
-	log.Printf("[SQUINT]: Read image file %s from %s (%d KB)\n", fileHeader.Filename, request.RemoteAddr, fileSizeKB)
+	log.Printf("📥 [SQUINT]: Read image file %s from %s (%d KB)\n", fileHeader.Filename, request.RemoteAddr, fileSizeKB)
 
 	// 5. Create a communication channel and dispatch the job to the workers
 	resultChan := make(chan JobResult, 1)
@@ -185,46 +185,46 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	// Use a non-blocking send with timeout to detect queue saturation
 	select {
 	case jobQueue <- job:
-		log.Printf("[SQUINT]: Job queued for request from %s\n", request.RemoteAddr)
+		log.Printf("⏳ [SQUINT]: Job queued for request from %s\n", request.RemoteAddr)
 		// Successfully queued, now wait for result with timeout
 		select {
 		case workerResult := <-resultChan:
 			if workerResult.Error != nil {
 				writer.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: workerResult.Error.Error()})
-				log.Printf("[SQUINT]: Worker error for request from %s: %v\n", request.RemoteAddr, workerResult.Error)
+				json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("❌ %v", workerResult.Error)})
+				log.Printf("❌ [SQUINT]: Worker error for request from %s: %v\n", request.RemoteAddr, workerResult.Error)
 				return
 			}
 
 			// 6. Return success
 			json.NewEncoder(writer).Encode(OCRResponse{
 				Text:   workerResult.Text,
-				Status: "[SQUINT]: Success",
+				Status: "✅ Success",
 			})
-			log.Printf("[SQUINT]: Successfully processed request from %s\n", request.RemoteAddr)
-
+			log.Printf("✅ [SQUINT]: Successfully processed request from %s\n", request.RemoteAddr)
+			imgBytes = nil // Clear image from memory
 		case <-time.After(30 * time.Second):
 			writer.WriteHeader(http.StatusRequestTimeout)
-			json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Worker processing timeout (30s exceeded)"})
-			log.Printf("[SQUINT]: Worker timeout for request from %s\n", request.RemoteAddr)
+			json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "⏱️  Worker processing timeout (30s exceeded)"})
+			log.Printf("⏱️  [SQUINT]: Worker timeout for request from %s\n", request.RemoteAddr)
 		}
 	case <-time.After(5 * time.Second):
 		writer.WriteHeader(http.StatusServiceUnavailable)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Job queue full, service unavailable"})
-		log.Printf("[SQUINT]: Queue timeout for request from %s\n", request.RemoteAddr)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "🔄 Job queue full, service unavailable"})
+		log.Printf("🔄 [SQUINT]: Queue timeout for request from %s\n", request.RemoteAddr)
 	}
 }
 
 func main() {
-	log.Printf("STARTING OCR")
+	log.Printf("🎯 STARTING OCR\n")
 	http.HandleFunc("/api/v1/ocr", ocrHandler)
-	log.Printf("[SQUINT]: Starting server with configuration: %+v\n", appConfig)
+	log.Printf("⚙️  [SQUINT]: Starting server with configuration: %+v\n", appConfig)
 
 	portStr := fmt.Sprintf(":%d", appConfig.Port)
-	log.Printf("[SQUINT]: Production Multi-Threaded Gateway live on port %d...", appConfig.Port)
+	log.Printf("🌐 [SQUINT]: Production Multi-Threaded Gateway live on port %d...\n", appConfig.Port)
 
 	if err := http.ListenAndServe(portStr, nil); err != nil {
-		log.Fatalf("[SQUINT]: Server initialization failure: %v", err)
+		log.Fatalf("💥 [SQUINT]: Server initialization failure: %v", err)
 	}
-	log.Println("[SQUINT]: Server shutdown gracefully.")
+	log.Println("👋 [SQUINT]: Server shutdown gracefully.")
 }
