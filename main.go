@@ -202,7 +202,7 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 				Status: "✅ Success",
 			})
 			log.Printf("✅ [SQUINT]: Successfully processed request from %s\n", request.RemoteAddr)
-			imgBytes = nil // Clear image from memory
+			//imgBytes = nil // Clear image from memory
 		case <-time.After(30 * time.Second):
 			writer.WriteHeader(http.StatusRequestTimeout)
 			json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "⏱️  Worker processing timeout (30s exceeded)"})
