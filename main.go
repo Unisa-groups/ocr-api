@@ -85,9 +85,14 @@ func init() {
 
 // ocrWorker runs infinitely in the background, grabbing jobs from the queue
 func ocrWorker(id int, queue chan Job) {
+	log.Printf("[SQUINT]: Worker thread #%d starting up...\n", id)
+	// CRITICAL FIX: Bind this goroutine to a dedicated OS thread.
+	// This ensures CGO stability and prevents OpenMP state corruption.
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	log.Printf("[SQUINT]: Worker thread #%d spawned and idling...", id)
 
-	// Crucial optimization: C++ client is initialized ONCE per thread
 	tesseractClient := gosseract.NewClient()
 	defer tesseractClient.Close()
 	tesseractClient.SetPageSegMode(gosseract.PSM_SINGLE_BLOCK)
@@ -112,12 +117,15 @@ func ocrWorker(id int, queue chan Job) {
 }
 
 func ocrHandler(writer http.ResponseWriter, request *http.Request) {
+	// IMPROVEMENT: Log immediately upon entry to verify the connection is active
+	log.Printf("[SQUINT]: Incoming %s request from %s to %s\n", request.Method, request.RemoteAddr, request.URL.Path)
 	writer.Header().Set("Content-Type", "application/json")
 
 	// 1. Enforce POST requests only
 	if request.Method != http.MethodPost {
 		writer.WriteHeader(http.StatusMethodNotAllowed)
 		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Only POST requests are allowed"})
+		log.Printf("[SQUINT]: Rejected non-POST request from %s\n", request.RemoteAddr)
 		return
 	}
 
@@ -126,6 +134,7 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Failed to parse form or file exceeds 10MB limit"})
+		log.Printf("[SQUINT]: Failed to parse multipart form from %s: %v\n", request.RemoteAddr, err)
 		return
 	}
 
@@ -134,6 +143,7 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Missing 'image' file in form data"})
+		log.Printf("[SQUINT]: Missing 'image' file in request from %s: %v\n", request.RemoteAddr, err)
 		return
 	}
 	defer file.Close()
@@ -143,6 +153,7 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	if err != nil {
 		writer.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Stream read failure"})
+		log.Printf("[SQUINT]: Failed to read image bytes from %s: %v\n", request.RemoteAddr, err)
 		return
 	}
 
@@ -159,6 +170,7 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	if workerResult.Error != nil {
 		writer.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: workerResult.Error.Error()})
+		log.Printf("[SQUINT]: Worker error for request from %s: %v\n", request.RemoteAddr, workerResult.Error)
 		return
 	}
 
@@ -170,7 +182,9 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 }
 
 func main() {
+	log.Printf("STARTING OCR")
 	http.HandleFunc("/api/v1/ocr", ocrHandler)
+	log.Printf("[SQUINT]: Starting server with configuration: %+v\n", appConfig)
 
 	portStr := fmt.Sprintf(":%d", appConfig.Port)
 	log.Printf("[SQUINT]: Production Multi-Threaded Gateway live on port %d...", appConfig.Port)
@@ -178,4 +192,5 @@ func main() {
 	if err := http.ListenAndServe(portStr, nil); err != nil {
 		log.Fatalf("[SQUINT]: Server initialization failure: %v", err)
 	}
+	log.Println("[SQUINT]: Server shutdown gracefully.")
 }

@@ -37,6 +37,8 @@ RUN apt-get clean && \
 # Point explicitly to the Tesseract 5 folder path inside Debian Bookworm
 ENV TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata/
 
+ENV OMP_THREAD_LIMIT=1
+
 WORKDIR /app
 
 # Bring over the compiled binary from Stage 1
