@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"runtime"
-	"time"
 
 	"github.com/otiai10/gosseract/v2"
 )
@@ -115,47 +114,39 @@ func ocrWorker(id int, queue chan Job) {
 func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	writer.Header().Set("Content-Type", "application/json")
 
-	imageURL := request.URL.Query().Get("image_url")
-	if imageURL == "" {
-		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Missing image_url parameter"})
+	// 1. Enforce POST requests only
+	if request.Method != http.MethodPost {
+		writer.WriteHeader(http.StatusMethodNotAllowed)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Only POST requests are allowed"})
 		return
 	}
 
-	// Download image using the browser spoof to bypass scraping blockers (e.g., Wikimedia)
-	// Fixed: Added timeout to prevent indefinite hangs
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("GET", imageURL, nil)
+	// 2. Parse the multipart form (Limit upload size to 10MB to protect memory)
+	err := request.ParseMultipartForm(10 << 20)
 	if err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("[SQUINT]: Invalid URL: %v", err)})
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Failed to parse form or file exceeds 10MB limit"})
 		return
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
-	response, err := client.Do(req)
+	// 3. Retrieve the file from the form data (Expecting the key "image")
+	file, _, err := request.FormFile("image")
 	if err != nil {
-		writer.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("[SQUINT]: Failed download: %v", err)})
+		writer.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Missing 'image' file in form data"})
 		return
 	}
-	defer response.Body.Close()
+	defer file.Close()
 
-	if response.StatusCode != http.StatusOK {
-		writer.WriteHeader(http.StatusBadGateway)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("[SQUINT]: Host returned HTTP %d", response.StatusCode)})
-		return
-	}
-
-	imgBytes, err := io.ReadAll(response.Body)
+	// 4. Read the file bytes directly into memory
+	imgBytes, err := io.ReadAll(file)
 	if err != nil {
-		writer.WriteHeader(http.StatusFailedDependency)
+		writer.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "[SQUINT]: Stream read failure"})
 		return
 	}
 
-	// Create a communication channel and dispatch the job to the workers
-	// Fixed: Use buffered channel with capacity 1 to prevent goroutine leaks
+	// 5. Create a communication channel and dispatch the job to the workers
 	resultChan := make(chan JobResult, 1)
 	job := Job{
 		ImageBytes: imgBytes,
@@ -171,6 +162,7 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	// 6. Return success
 	json.NewEncoder(writer).Encode(OCRResponse{
 		Text:   workerResult.Text,
 		Status: "[SQUINT]: Success",

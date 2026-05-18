@@ -1,61 +1,58 @@
+import os
 import requests
 import json
 import time
 
 def run_squint_test_suite():
     SQUINT_API_URL = "http://localhost:8080/api/v1/ocr"
+    TEST_DIR = "test_images"
     
-    # Define a matrix of different image scenarios to test the OCR engine boundaries
-    test_cases = [
-        {
-            "name": "Standard Clean Text (PNG)",
-            "url": "https://raw.githubusercontent.com/otiai10/gosseract/main/test/data/001-helloworld.png"
-        },
-        {
-            "name": "Multi-line Printed Book Paragraph (JPG)",
-            "url": "https://raw.githubusercontent.com/otiai10/gosseract/main/test/data/002-confusing.png"
-        },
-        {
-            "name": "High-Contrast Multi-line Terminal Text (PNG)",
-            "url": "https://raw.githubusercontent.com/otiai10/gosseract/main/test/data/003-longer-text.png"
-        },
-        {
-            "name": "Deliberate 404 Error (Edge Case Test)",
-            "url": "https://raw.githubusercontent.com/otiai10/gosseract/main/test/data/this-file-does-not-exist.jpg"
-        }
-    ]
-    
+    # Auto-initialize local image directory if it doesn't exist
+    if not os.path.exists(TEST_DIR):
+        os.makedirs(TEST_DIR)
+        print("==================================================")
+        print(f"📁 Created folder: './{TEST_DIR}'")
+        print("👉 Please drop some test images (.png, .jpg) in there and rerun!")
+        print("==================================================")
+        return
+
+    # Filter out local directory contents for common image types
+    valid_extensions = ('.png', '.jpg', '.jpeg', '.bmp', '.tiff')
+    test_files = [f for f in os.listdir(TEST_DIR) if f.lower().endswith(valid_extensions)]
+
+    if not test_files:
+        print("==================================================")
+        print(f"❌ No test images found in the './{TEST_DIR}' directory.")
+        print("👉 Please add at least one image file to test the OCR engine.")
+        print("==================================================")
+        return
+
     print("==================================================")
-    print("        SQUINT MICROSERVICE TEST SUITE            ")
+    print("        SQUINT MICROSERVICE LOCAL TEST SUITE       ")
     print("==================================================\n")
     
-    for i, case in enumerate(test_cases, 1):
-        print(f"[{i}/{len(test_cases)}] Testing: {case['name']}")
-        print(f"Target URL: {case['url']}")
-        
-        payload = {"image_url": case["url"]}
-        start_time = time.time()
+    for i, file_name in enumerate(test_files, 1):
+        file_path = os.path.join(TEST_DIR, file_name)
+        print(f"[{i}/{len(test_files)}] Testing Local File: {file_name}")
         
         try:
-            # Fire request to the Go microservice
-            response = requests.get(SQUINT_API_URL, params=payload, timeout=15)
-            elapsed_time = time.time() - start_time
+            with open(file_path, 'rb') as img_file:
+                # Transmit file via multipart payload containing raw image bytes
+                files = {'image': (file_name, img_file, 'image/jpeg')}
+                response = requests.post(SQUINT_API_URL, files=files, timeout=15)
             
-            print(f"Server Response Code: {response.status_code} (Took {elapsed_time:.2f}s)")
-            
-            # Pretty-print the structured JSON payload returned by Squint
             try:
-                print("Result Payload:")
-                print(json.dumps(response.json(), indent=4))
+                resp_json = response.json()
+                # Print only the direct text engine error field if present
+                if "Error" in resp_json:
+                    print(f"❌ Error: {resp_json['Error']}")
+                else:
+                    print(f"✅ Success! Extracted Text:\n{resp_json.get('text', '')}")
             except json.JSONDecodeError:
-                print(f"Raw Output (Non-JSON): {response.text}")
+                print(f"❌ Server crashed or failed to return JSON. Status code: {response.status_code}")
                 
-        except requests.exceptions.Timeout:
-            print("❌ Error: The request timed out.")
-        except requests.exceptions.ConnectionError:
-            print("❌ Error: Could not connect to Squint. Is the container running?")
         except Exception as e:
-            print(f"❌ Unexpected script error: {e}")
+            print(f"❌ Connection/Script Error: {e}")
             
         print("-" * 50 + "\n")
 
