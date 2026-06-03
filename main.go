@@ -47,7 +47,7 @@ func loadConfig() {
 	appConfig = Config{
 		WorkerPoolSize:  runtime.NumCPU(), // Default to available cores
 		QueueBufferSize: 100,
-		Port:            8080,
+		Port:            30000,
 		MaxImageSizeMB:  10, // Default to 10 MB
 	}
 
@@ -122,6 +122,35 @@ func ocrWorker(id int, queue chan Job) {
 	}
 }
 
+func processImage(request *http.Request) ([]byte, string, error) {
+	// 2. Parse the multipart form (Limit upload size using configured MaxImageSizeMB)
+	maxSize := int64(appConfig.MaxImageSizeMB) << 20
+	err := request.ParseMultipartForm(maxSize)
+	if err != nil {
+		return nil, "", fmt.Errorf("❌ Failed to parse form or file exceeds %d MB limit", appConfig.MaxImageSizeMB)
+	}
+
+	// 3. Retrieve the file from the form data (Expecting the key "image")
+	file, fileHeader, err := request.FormFile("image")
+	if err != nil {
+		return nil, "", fmt.Errorf("❌ Missing 'image' file in form data")
+	}
+	defer file.Close()
+
+	// Pre-flight file size check
+	if fileHeader.Size > maxSize {
+		return nil, "", fmt.Errorf("❌ File exceeds %d MB limit", appConfig.MaxImageSizeMB)
+	}
+
+	// 4. Read the file bytes directly into memory
+	imgBytes, err := io.ReadAll(file)
+	if err != nil {
+		return nil, "", fmt.Errorf("❌ Stream read failure")
+	}
+
+	return imgBytes, fileHeader.Filename, nil
+}
+
 func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	// IMPROVEMENT: Log immediately upon entry to verify the connection is active
 	log.Printf("📨 [SQUINT]: Incoming %s request from %s to %s\n", request.Method, request.RemoteAddr, request.URL.Path)
@@ -135,45 +164,16 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	// 2. Parse the multipart form (Limit upload size using configured MaxImageSizeMB)
-	maxSize := int64(appConfig.MaxImageSizeMB) << 20
-	err := request.ParseMultipartForm(maxSize)
+	imgBytes, filename, err := processImage(request)
 	if err != nil {
 		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("❌ Failed to parse form or file exceeds %d MB limit", appConfig.MaxImageSizeMB)})
-		log.Printf("⚠️  [SQUINT]: Failed to parse multipart form from %s: %v\n", request.RemoteAddr, err)
+		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: err.Error()})
+		log.Printf("⚠️  [SQUINT]: Image processing failed for %s: %v\n", request.RemoteAddr, err)
 		return
 	}
 
-	// 3. Retrieve the file from the form data (Expecting the key "image")
-	file, fileHeader, err := request.FormFile("image")
-	if err != nil {
-		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "❌ Missing 'image' file in form data"})
-		log.Printf("🚫 [SQUINT]: Missing 'image' file in request from %s: %v\n", request.RemoteAddr, err)
-		return
-	}
-	defer file.Close()
-
-	// Pre-flight file size check
-	fileSizeKB := fileHeader.Size / 1024
-	if fileHeader.Size > maxSize {
-		writer.WriteHeader(http.StatusBadRequest)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: fmt.Sprintf("❌ File exceeds %d MB limit", appConfig.MaxImageSizeMB)})
-		log.Printf("📦 [SQUINT]: REJECTED oversized file from %s: %s (%d KB, max: %d MB)\n", request.RemoteAddr, fileHeader.Filename, fileSizeKB, appConfig.MaxImageSizeMB)
-		return
-	}
-
-	// 4. Read the file bytes directly into memory
-	imgBytes, err := io.ReadAll(file)
-	if err != nil {
-		writer.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "❌ Stream read failure"})
-		log.Printf("⚠️  [SQUINT]: Failed to read image bytes from %s: %v\n", request.RemoteAddr, err)
-		return
-	}
-
-	log.Printf("📥 [SQUINT]: Read image file %s from %s (%d KB)\n", fileHeader.Filename, request.RemoteAddr, fileSizeKB)
+	fileSizeKB := len(imgBytes) / 1024
+	log.Printf("📥 [SQUINT]: Read image file %s from %s (%d KB)\n", filename, request.RemoteAddr, fileSizeKB)
 
 	// 5. Create a communication channel and dispatch the job to the workers
 	resultChan := make(chan JobResult, 1)
@@ -202,7 +202,6 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 				Status: "✅ Success",
 			})
 			log.Printf("✅ [SQUINT]: Successfully processed request from %s\n", request.RemoteAddr)
-			//imgBytes = nil // Clear image from memory
 		case <-time.After(30 * time.Second):
 			writer.WriteHeader(http.StatusRequestTimeout)
 			json.NewEncoder(writer).Encode(OCRResponse{Status: "error", Error: "⏱️  Worker processing timeout (30s exceeded)"})
@@ -215,9 +214,51 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
+func testHandler(writer http.ResponseWriter, request *http.Request) {
+	log.Printf("📨 [SQUINT-TEST]: Incoming %s request from %s to %s\n", request.Method, request.RemoteAddr, request.URL.Path)
+
+	if request.Method != http.MethodPost {
+		http.Error(writer, "❌ Only POST requests are allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	imgBytes, filename, err := processImage(request)
+	if err != nil {
+		http.Error(writer, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("📥 [SQUINT-TEST]: Read image file %s from %s (%d KB)\n", filename, request.RemoteAddr, len(imgBytes)/1024)
+
+	resultChan := make(chan JobResult, 1)
+	job := Job{
+		ImageBytes: imgBytes,
+		ResultChan: resultChan,
+	}
+
+	select {
+	case jobQueue <- job:
+		select {
+		case workerResult := <-resultChan:
+			if workerResult.Error != nil {
+				http.Error(writer, workerResult.Error.Error(), http.StatusInternalServerError)
+				return
+			}
+			writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			fmt.Fprint(writer, workerResult.Text)
+			log.Printf("✅ [SQUINT-TEST]: Successfully processed request from %s\n", request.RemoteAddr)
+		case <-time.After(30 * time.Second):
+			http.Error(writer, "⏱️  Worker processing timeout", http.StatusRequestTimeout)
+		}
+	case <-time.After(5 * time.Second):
+		http.Error(writer, "🔄 Job queue full", http.StatusServiceUnavailable)
+	}
+}
+
 func main() {
 	log.Printf("🎯 STARTING OCR\n")
 	http.HandleFunc("/api/v1/ocr", ocrHandler)
+	http.HandleFunc("/test", testHandler)
 	log.Printf("⚙️  [SQUINT]: Starting server with configuration: %+v\n", appConfig)
 
 	portStr := fmt.Sprintf(":%d", appConfig.Port)
