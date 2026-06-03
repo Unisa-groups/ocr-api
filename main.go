@@ -217,6 +217,99 @@ func ocrHandler(writer http.ResponseWriter, request *http.Request) {
 func testHandler(writer http.ResponseWriter, request *http.Request) {
 	log.Printf("📨 [SQUINT-TEST]: Incoming %s request from %s to %s\n", request.Method, request.RemoteAddr, request.URL.Path)
 
+	if request.Method == http.MethodGet {
+		writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(writer, `
+			<!DOCTYPE html>
+			<html>
+			<head>
+				<title>Squint OCR Test</title>
+				<style>
+					body { font-family: sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; line-height: 1.6; background: #f4f7f6; }
+					.container { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+					h1 { color: #333; margin-top: 0; }
+					form { border: 2px dashed #007bff; padding: 20px; border-radius: 8px; text-align: center; margin-bottom: 20px; transition: background 0.3s; }
+					form:hover { background: #f0f7ff; }
+					input[type="file"] { margin-bottom: 20px; display: block; margin-left: auto; margin-right: auto; }
+					.buttons { display: flex; gap: 10px; justify-content: center; }
+					input[type="submit"], button { background: #007bff; color: white; border: none; padding: 12px 24px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; transition: background 0.2s; }
+					input[type="submit"]:hover { background: #0056b3; }
+					button.clear { background: #6c757d; }
+					button.clear:hover { background: #5a6268; }
+					#results-container { margin-top: 30px; display: none; }
+					h3 { margin-bottom: 10px; color: #444; }
+					#results { background: #2d2d2d; color: #f8f8f2; padding: 20px; border-radius: 8px; white-space: pre-wrap; word-break: break-all; min-height: 100px; max-height: 500px; overflow-y: auto; font-family: 'Courier New', Courier, monospace; border-left: 5px solid #007bff; }
+					.loading { display: none; color: #007bff; font-weight: bold; margin-bottom: 10px; }
+				</style>
+			</head>
+			<body>
+				<div class="container">
+					<h1>📷 Squint OCR Test</h1>
+					<p>Upload an image to see the raw OCR results in real-time.</p>
+					
+					<form id="ocrForm">
+						<input type="file" id="imageInput" name="image" accept="image/*" required>
+						<div class="buttons">
+							<input type="submit" value="Extract Text">
+							<button type="button" class="clear" onclick="resetForm()">Clear</button>
+						</div>
+					</form>
+
+					<div id="results-container">
+						<div class="loading" id="loading">⌛ Processing image...</div>
+						<h3>Results:</h3>
+						<pre id="results"></pre>
+					</div>
+				</div>
+
+				<script>
+					const form = document.getElementById('ocrForm');
+					const resultsContainer = document.getElementById('results-container');
+					const resultsElement = document.getElementById('results');
+					const loading = document.getElementById('loading');
+
+					form.onsubmit = async (e) => {
+						e.preventDefault();
+						const formData = new FormData(form);
+						
+						resultsContainer.style.display = 'block';
+						resultsElement.textContent = '';
+						loading.style.display = 'block';
+						
+						try {
+							const response = await fetch('/test', {
+								method: 'POST',
+								body: formData
+							});
+							
+							if (!response.ok) {
+								const errorText = await response.text();
+								throw new Error(errorText || 'Server error');
+							}
+							
+							const text = await response.text();
+							resultsElement.textContent = text || '(No text detected)';
+						} catch (err) {
+							resultsElement.textContent = '❌ Error: ' + err.message;
+							resultsElement.style.color = '#ff6b6b';
+						} finally {
+							loading.style.display = 'none';
+						}
+					};
+
+					function resetForm() {
+						form.reset();
+						resultsElement.textContent = '';
+						resultsElement.style.color = '#f8f8f2';
+						resultsContainer.style.display = 'none';
+					}
+				</script>
+			</body>
+			</html>
+		`)
+		return
+	}
+
 	if request.Method != http.MethodPost {
 		http.Error(writer, "❌ Only POST requests are allowed", http.StatusMethodNotAllowed)
 		return
