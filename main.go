@@ -1,18 +1,13 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"os/signal"
 	"runtime"
-	"sync"
-	"syscall"
 	"time"
 
 	"github.com/otiai10/gosseract/v2"
@@ -44,11 +39,8 @@ type OCRResponse struct {
 	Error  string `json:"error,omitempty"`
 }
 
-var (
-	jobQueue  chan Job
-	appConfig Config
-	workerWG  sync.WaitGroup
-)
+var jobQueue chan Job
+var appConfig Config
 
 // loadConfig reads from config.json or applies safe defaults
 func loadConfig() {
@@ -86,16 +78,12 @@ func loadConfig() {
 
 func init() {
 	loadConfig()
-}
 
-// StartWorkerPool initializes the job queue and starts the worker goroutines.
-func StartWorkerPool() {
 	// Create a buffered channel for incoming requests
 	jobQueue = make(chan Job, appConfig.QueueBufferSize)
 
 	// Spin up the background worker pool
 	for i := 1; i <= appConfig.WorkerPoolSize; i++ {
-		workerWG.Add(1)
 		go ocrWorker(i, jobQueue)
 	}
 	log.Printf("🔧 [SQUINT]: Initialized worker pool with %d parallel Tesseract daemons.\n", appConfig.WorkerPoolSize)
@@ -103,7 +91,6 @@ func StartWorkerPool() {
 
 // ocrWorker runs infinitely in the background, grabbing jobs from the queue
 func ocrWorker(id int, queue chan Job) {
-	defer workerWG.Done()
 	log.Printf("🚀 [SQUINT]: Worker thread #%d starting up...\n", id)
 	// CRITICAL FIX: Bind this goroutine to a dedicated OS thread.
 	// This ensures CGO stability and prevents OpenMP state corruption.
@@ -268,61 +255,17 @@ func testHandler(writer http.ResponseWriter, request *http.Request) {
 	}
 }
 
-func healthHandler(writer http.ResponseWriter, request *http.Request) {
-	writer.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(writer).Encode(map[string]string{
-		"status":  "UP",
-		"version": "1.0.0",
-	})
-}
-
 func main() {
 	log.Printf("🎯 STARTING OCR\n")
-
-	StartWorkerPool()
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/v1/ocr", ocrHandler)
-	mux.HandleFunc("/test", testHandler)
-	mux.HandleFunc("/health", healthHandler)
-
+	http.HandleFunc("/api/v1/ocr", ocrHandler)
+	http.HandleFunc("/test", testHandler)
 	log.Printf("⚙️  [SQUINT]: Starting server with configuration: %+v\n", appConfig)
 
 	portStr := fmt.Sprintf(":%d", appConfig.Port)
-	server := &http.Server{
-		Addr:    portStr,
-		Handler: mux,
+	log.Printf("🌐 [SQUINT]: Production Multi-Threaded Gateway live on port %d...\n", appConfig.Port)
+
+	if err := http.ListenAndServe(portStr, nil); err != nil {
+		log.Fatalf("💥 [SQUINT]: Server initialization failure: %v", err)
 	}
-
-	// Channel to listen for interrupt signals
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-
-	go func() {
-		log.Printf("🌐 [SQUINT]: Production Multi-Threaded Gateway live on port %d...\n", appConfig.Port)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Fatalf("💥 [SQUINT]: Server initialization failure: %v", err)
-		}
-	}()
-
-	// Wait for interrupt signal
-	<-stop
-	log.Println("🛑 [SQUINT]: Shutting down server...")
-
-	// Create a timeout context for shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	if err := server.Shutdown(ctx); err != nil {
-		log.Printf("⚠️  [SQUINT]: Server forced to shutdown: %v\n", err)
-	}
-
-	// Close the job queue to signal workers to exit
-	close(jobQueue)
-
-	// Wait for workers to finish their current jobs
-	log.Println("⏳ [SQUINT]: Waiting for workers to finish...")
-	workerWG.Wait()
-
 	log.Println("👋 [SQUINT]: Server shutdown gracefully.")
 }

@@ -144,6 +144,40 @@ func TestHealthHandler(t *testing.T) {
 	}
 }
 
+func TestIndexHandler(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(indexHandler)
+
+	handler.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "text/html; charset=utf-8" {
+		t.Errorf("handler returned wrong content type: got %v want text/html; charset=utf-8", contentType)
+	}
+}
+
+func TestOCRHandler_GET(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/ocr", nil)
+	rr := httptest.NewRecorder()
+	handler := http.HandlerFunc(ocrHandler)
+
+	handler.ServeHTTP(rr, req)
+
+	if status := rr.Code; status != http.StatusOK {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "text/html; charset=utf-8" {
+		t.Errorf("handler returned wrong content type: got %v want text/html; charset=utf-8", contentType)
+	}
+}
+
 func TestOCRHandler_Success(t *testing.T) {
 	// Initialize jobQueue
 	appConfig.QueueBufferSize = 1

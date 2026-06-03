@@ -12,6 +12,7 @@ An OCR (Optical Character Recognition) microservice built with Go and Tesseract,
 
 ## 🚀 Features
 
+- **Web UI** - Interactive web interface for easy image uploads and OCR result visualization
 - **HTTP REST API** - Simple POST endpoint to process images and extract text
 - **Multipart Form Upload** - Direct image file upload via multipart/form-data
 - **Worker Pool Architecture** - Configurable worker threads with queue-based job distribution
@@ -65,6 +66,10 @@ go run main.go
 ```
 
 The service will start on `http://localhost:30000`
+
+### Web Interface
+
+Simply open `http://localhost:30000` in your web browser to access the Squint OCR web interface. You can drag and drop images to extract text immediately.
 
 ### Docker Deployment
 
@@ -184,6 +189,7 @@ with open('/path/to/image.jpg', 'rb') as img_file:
 ```
 Squint/
 ├── main.go                 # Main application with HTTP handler and worker pool
+├── index.html              # Web UI template
 ├── config.json             # Configuration file (worker pool, queue, port, max file size)
 ├── go.mod                  # Go module definition
 ├── go.sum                  # Go module checksums
