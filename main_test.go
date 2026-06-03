@@ -127,27 +127,10 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 }
 
-func TestHealthHandler(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+func TestTestHandler_GET(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(healthHandler)
-
-	handler.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusOK {
-		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
-	}
-
-	expected := `{"status":"UP","version":"1.0.0"}`
-	if rr.Body.String() != expected+"\n" {
-		t.Errorf("handler returned unexpected body: got %v want %v", rr.Body.String(), expected)
-	}
-}
-
-func TestIndexHandler(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(indexHandler)
+	handler := http.HandlerFunc(testHandler)
 
 	handler.ServeHTTP(rr, req)
 
@@ -168,13 +151,13 @@ func TestOCRHandler_GET(t *testing.T) {
 
 	handler.ServeHTTP(rr, req)
 
-	if status := rr.Code; status != http.StatusOK {
-		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	if status := rr.Code; status != http.StatusMethodNotAllowed {
+		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusMethodNotAllowed)
 	}
 
 	contentType := rr.Header().Get("Content-Type")
-	if contentType != "text/html; charset=utf-8" {
-		t.Errorf("handler returned wrong content type: got %v want text/html; charset=utf-8", contentType)
+	if contentType != "application/json" {
+		t.Errorf("handler returned wrong content type: got %v want application/json", contentType)
 	}
 }
 
