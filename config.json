@@ -1,6 +1,6 @@
 {
     "worker_pool_size": 1,
     "queue_buffer_size": 50,
-    "port": 8080,
+    "port": 30000,
     "max_image_size_mb": 10
 }

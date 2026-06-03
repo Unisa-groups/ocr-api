@@ -5,7 +5,7 @@ import time
 
 def run_squint_test_suite():
     # Note: Using the POST endpoint now instead of passing URL parameters
-    SQUINT_API_URL = "http://localhost:8080/api/v1/ocr"
+    SQUINT_API_URL = "http://localhost:30000/api/v1/ocr"
     
     # Create a local test directory name
     TEST_DIR = "test_images"

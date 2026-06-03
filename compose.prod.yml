@@ -1,0 +1,12 @@
+services:
+  app:
+    container_name: ocr-api
+    image: ghcr.io/unisa-groups/ocr-api:sha-000
+    restart: always
+    ports:
+      - "30000:30000"
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 512M

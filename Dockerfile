@@ -1,5 +1,5 @@
 # --- Stage 1: Build Environment ---
-FROM golang:1.26-bookworm AS builder
+FROM golang:1.25-bookworm AS builder
 
 # Force apt to refresh indexes completely and handle stale caches aggressively
 RUN apt-get clean && \
@@ -44,6 +44,6 @@ WORKDIR /app
 # Bring over the compiled binary from Stage 1
 COPY --from=builder /app/squint .
 
-EXPOSE 8080
+EXPOSE 30000
 
 CMD ["./squint"]
