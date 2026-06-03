@@ -1,7 +1,7 @@
 services:
   app:
     container_name: ocr-api
-    image: ghcr.io/unisa-groups/ocr-api:sha-000
+    image: ghcr.io/unisa-groups/ocr-api:sha-ac05ee7
     restart: always
     ports:
       - "30000:30000"
