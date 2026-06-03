@@ -54,7 +54,7 @@ go mod download
 {
     "worker_pool_size": 4,
     "queue_buffer_size": 50,
-    "port": 8080,
+    "port": 3000,
     "max_image_size_mb": 10
 }
 ```
@@ -64,7 +64,7 @@ go mod download
 go run main.go
 ```
 
-The service will start on `http://localhost:8080`
+The service will start on `http://localhost:3000`
 
 ### Docker Deployment
 
@@ -76,7 +76,7 @@ docker-compose up
 2. Or build and run with Docker directly:
 ```bash
 docker build -t squint .
-docker run -p 8080:8080 squint
+docker run -p 3000:3000 squint
 ```
 
 ## 📡 API Usage
@@ -95,7 +95,7 @@ POST /api/v1/ocr
 
 **Using cURL:**
 ```bash
-curl -X POST -F "image=@/path/to/image.jpg" "http://localhost:8080/api/v1/ocr"
+curl -X POST -F "image=@/path/to/image.jpg" "http://localhost:3000/api/v1/ocr"
 ```
 
 **Using JavaScript/Fetch:**
@@ -103,7 +103,7 @@ curl -X POST -F "image=@/path/to/image.jpg" "http://localhost:8080/api/v1/ocr"
 const formData = new FormData();
 formData.append('image', fileInputElement.files[0]);
 
-fetch('http://localhost:8080/api/v1/ocr', {
+fetch('http://localhost:3000/api/v1/ocr', {
   method: 'POST',
   body: formData
 })
@@ -118,7 +118,7 @@ import requests
 
 with open('/path/to/image.jpg', 'rb') as img_file:
     files = {'image': img_file}
-    response = requests.post('http://localhost:8080/api/v1/ocr', files=files)
+    response = requests.post('http://localhost:3000/api/v1/ocr', files=files)
     data = response.json()
     print('Extracted text:', data['text'])
 ```
@@ -234,7 +234,7 @@ The `config.json` file allows customization:
 {
     "worker_pool_size": 4,      // Number of parallel OCR workers (defaults to CPU count)
     "queue_buffer_size": 50,    // Size of the job queue buffer
-    "port": 8080,               // HTTP server port
+    "port": 3000,               // HTTP server port
     "max_image_size_mb": 10     // Maximum image file size in MB
 }
 ```
@@ -242,7 +242,7 @@ The `config.json` file allows customization:
 **Default Behavior**: If `config.json` is missing or invalid, the service uses safe defaults:
 - `worker_pool_size`: Number of available CPU cores
 - `queue_buffer_size`: 100
-- `port`: 8080
+- `port`: 3000
 - `max_image_size_mb`: 10 MB
 
 ## 📝 Dependencies
